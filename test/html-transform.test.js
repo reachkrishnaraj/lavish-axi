@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { injectLavishSdk } from "../src/html-transform.js";
+import { injectLavishSdk, isServableHtml } from "../src/html-transform.js";
+
+test("isServableHtml matches html and htm artifact siblings", () => {
+  assert.equal(isServableHtml("open-questions.html"), true);
+  assert.equal(isServableHtml("page.htm"), true);
+  assert.equal(isServableHtml("assets/style.css"), false);
+});
 
 test("injects the Lavish SDK before the closing body tag", () => {
   const html = "<!doctype html><html><body><h1>Hi</h1></body></html>";

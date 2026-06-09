@@ -410,8 +410,8 @@ test("chrome disables sending while agent is working but allows it while waiting
   const js = await chromeClientSource();
 
   assert.match(js, /let agentPresence = "waiting"/);
-  assert.match(js, /sendButton\.disabled = agentPresence === "working"/);
-  assert.match(js, /if \(agentPresence === "working"\) return/);
+  assert.match(js, /sendButton\.disabled = agentPresence === "working" \|\| Boolean\(submitQueuedPromise\)/);
+  assert.match(js, /if \(agentPresence === "working" \|\| submitQueuedPromise\) return/);
 });
 
 test("chrome shows a waiting banner when no agent has attached", async () => {
@@ -559,7 +559,17 @@ test("chrome submits prompts queued during an in-flight submit", async () => {
   assert.match(js, /let submitQueuedAgain = false/);
   assert.match(js, /submitQueuedAgain = true/);
   assert.match(js, /const shouldSubmitAgain = submitQueuedAgain/);
-  assert.match(js, /if \(succeeded && shouldSubmitAgain && queued\.length\) submitQueued\(\)/);
+  assert.match(js, /if \(succeeded && shouldSubmitAgain && queued\.length\) sendQueued\(\)/);
+});
+
+test("chrome persists composer drafts and shows submit status feedback", async () => {
+  const js = await chromeClientSource();
+
+  assert.match(js, /lavish-axi:draft:/);
+  assert.match(js, /function persistComposerDraft\(\)/);
+  assert.match(js, /function showSubmitStatus\(/);
+  assert.match(js, /SNAPSHOT_TIMEOUT_MS = 3000/);
+  assert.match(js, /submitStatus/);
 });
 
 test("/health reports the server version so clients can detect upgrades", async () => {
@@ -570,6 +580,7 @@ test("/health reports the server version so clients can detect upgrades", async 
     const body = await res.json();
     assert.equal(body.ok, true);
     assert.equal(body.version, "9.9.9-test");
+    assert.equal(body.store.backend, "file");
   } finally {
     await server.close();
     await rm(dir, { recursive: true, force: true });
@@ -628,6 +639,36 @@ test("/artifact serves files copied under the artifact directory", async () => {
     assert.equal(svg.status, 200);
     assert.match(svg.headers.get("content-type") || "", /image\/svg\+xml/);
     assert.match(await svg.text(), /<svg/);
+  } finally {
+    await server.close();
+    await rm(parent, { recursive: true, force: true });
+  }
+});
+
+test("/artifact injects Lavish SDK into sibling HTML pages (child-page annotation)", async () => {
+  const parent = await mkdtemp(path.join(tmpdir(), "lavish-serve-"));
+  const dir = path.join(parent, ".lavish", "replay-data-layer");
+  const index = path.join(dir, "index.html");
+  const child = path.join(dir, "open-questions.html");
+  await mkdir(dir, { recursive: true });
+  await writeFile(index, "<!doctype html><html><body><a href='open-questions.html'>Questions</a></body></html>");
+  await writeFile(child, "<!doctype html><html><body><h1>Gate 4</h1></body></html>");
+  const server = await serve({ port: 0, stateFile: path.join(dir, "state.json"), version: "9.9.9-test" });
+  try {
+    const base = `http://127.0.0.1:${server.port}`;
+    const sessionRes = await fetch(`${base}/api/sessions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ file: index }),
+    });
+    const session = await sessionRes.json();
+    const childRes = await fetch(`${base}/artifact/${session.key}/open-questions.html`);
+    const body = await childRes.text();
+
+    assert.equal(childRes.status, 200);
+    assert.match(childRes.headers.get("content-type") || "", /text\/html/);
+    assert.match(body, /<script src="\/sdk\.js\?key=/);
+    assert.match(body, /<h1>Gate 4<\/h1>/);
   } finally {
     await server.close();
     await rm(parent, { recursive: true, force: true });

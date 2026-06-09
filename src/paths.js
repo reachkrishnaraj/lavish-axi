@@ -12,6 +12,10 @@ export function stateFile() {
   return path.join(stateDir(), "state.json");
 }
 
+export function sqliteStateFile() {
+  return path.join(stateDir(), "state.sqlite");
+}
+
 export function serverLogFile() {
   return path.join(stateDir(), "server.log");
 }

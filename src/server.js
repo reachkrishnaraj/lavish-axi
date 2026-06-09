@@ -6,9 +6,10 @@ import chokidar from "chokidar";
 import express from "express";
 
 import { createArtifactSdk } from "./artifact-sdk.js";
-import { injectLavishSdk } from "./html-transform.js";
+import { injectLavishSdk, isServableHtml } from "./html-transform.js";
+import { createSessionStore, describeStoreConfig } from "./create-session-store.js";
 import { LOOPBACK_HOST } from "./paths.js";
-import { canonicalFile, SessionStore, sessionKey } from "./session-store.js";
+import { canonicalFile, sessionKey } from "./session-store.js";
 
 const chromeClientUrl = new URL("./chrome-client.js", import.meta.url);
 const chromeCssUrl = new URL("./chrome.css", import.meta.url);
@@ -49,6 +50,7 @@ export function resolveIdleTimeoutMs(env = process.env) {
 export async function serve({
   port,
   stateFile,
+  store: providedStore,
   version = "",
   debug = false,
   log = null,
@@ -56,7 +58,8 @@ export async function serve({
   idleTimeoutMs = resolveIdleTimeoutMs(),
 }) {
   const app = express();
-  const store = new SessionStore(stateFile);
+  const store = providedStore ?? (await createSessionStore({ stateFile }));
+  const storeInfo = describeStoreConfig();
   const events = new EventEmitter();
   const watchers = new Map();
   const activePolls = new Map();
@@ -70,7 +73,7 @@ export async function serve({
   app.use(express.json({ limit: "2mb" }));
 
   app.get("/health", (req, res) => {
-    res.json({ ok: true, app: "lavish-axi", version });
+    res.json({ ok: true, app: "lavish-axi", version, store: storeInfo });
   });
 
   let shutdownResolve;
@@ -279,6 +282,11 @@ export async function serve({
         res.status(403).send("Forbidden");
         return;
       }
+      if (isServableHtml(file)) {
+        const html = await readFile(file, "utf8");
+        res.type("html").send(injectLavishSdk(html, key));
+        return;
+      }
       res.sendFile(file, { dotfiles: "allow" });
     } catch (error) {
       next(error);
@@ -395,7 +403,10 @@ export async function serve({
       w.close().catch(() => {});
     }
     watchers.clear();
-    httpServer.close(() => shutdownResolve());
+    const closeStore = typeof store.close === "function" ? store.close().catch(() => {}) : Promise.resolve();
+    void closeStore.finally(() => {
+      httpServer.close(() => shutdownResolve());
+    });
     // Force-close keep-alive sockets so SSE / long-polls don't keep us alive.
     if (typeof httpServer.closeAllConnections === "function") {
       httpServer.closeAllConnections();
@@ -581,7 +592,7 @@ export function createChromeHtml(session) {
 </head>
 <body class="lavish">
 <div class="bar"><div class="brand"><span class="brand-mark">Lavish</span><span class="brand-support">Editor</span></div><div class="divider" aria-hidden="true"></div><div class="file-wrap" title="${escapeHtml(session.file)}"><input class="file-input" id="filePath" readonly size="${fileInputSize}" value="${escapeHtml(session.file)}"><button class="copy-button" id="copyPath" type="button">Copy Path</button></div><button class="button secondary annotation-on" id="annotation">Annotation: On</button><button class="button danger" id="end">End Session</button></div>
-<div class="layout"><div class="frame"><iframe id="artifact" sandbox="allow-scripts allow-forms allow-popups allow-downloads" src="/artifact/${session.key}/index.html"></iframe></div><aside class="panel"><h2>Conversation</h2><div class="chat" id="chatLog"></div><div class="composer"><div class="presence-banner" id="presenceBanner" hidden>Your agent is not listening. If this persists, ask your agent to poll for updates from Lavish.</div><div class="annotation-pills" id="annotationPills"></div><textarea id="chatInput" placeholder="Write a message for the agent..."></textarea><div class="actions"><button class="button" id="send">Send to Agent</button></div></div></aside></div>
+<div class="layout"><div class="frame"><iframe id="artifact" sandbox="allow-scripts allow-forms allow-popups allow-downloads" src="/artifact/${session.key}/index.html"></iframe></div><aside class="panel"><h2>Conversation</h2><div class="chat" id="chatLog"></div><div class="composer"><div class="presence-banner" id="presenceBanner" hidden>Your agent is not listening. If this persists, ask your agent to poll for updates from Lavish.</div><div class="annotation-pills" id="annotationPills"></div><textarea id="chatInput" placeholder="Write a message for the agent..."></textarea><div class="submit-status" id="submitStatus" hidden aria-live="polite"></div><div class="actions"><button class="button" id="send">Send to Agent</button></div></div></aside></div>
 <script id="lavish-session" type="application/json">${sessionJson}</script>
 <script src="/chrome-client.js"></script>
 </body>

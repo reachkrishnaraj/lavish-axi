@@ -44,7 +44,15 @@ It shuts itself down once no browser chrome (SSE) and no agent poll have been co
 `lavish-axi stop` (`stopCommand`) explicitly `POST /shutdown`s the server on the default port, accepts `--port`, and reports `stopped`, `stopping`, `not-running`, or `not-lavish`.
 Because cleanup keys off live connections rather than session status, the next `lavish-axi <file>` re-spawns a fresh server and adopts the session from `state.json`.
 
-State lives at `~/.lavish-axi/state.json` (override with `LAVISH_AXI_STATE_DIR`). All sessions across all projects share this one file, keyed by a sha256 prefix of the canonicalized file path - so the CLI never needs opaque session IDs; the canonical HTML path _is_ the identity (`src/session-store.js:sessionKey`).
+Session storage is pluggable via `LAVISH_AXI_STORE` (`src/create-session-store.js`):
+
+- **file** (default) → `~/.lavish-axi/state.json`
+- **sqlite** → `~/.lavish-axi/state.sqlite` (Node 22+ `node:sqlite`)
+- **mongo** → `mongodb://...` or `LAVISH_AXI_STORE=mongo` + `MONGODB_URL`; collection `sessions`
+
+Override state directory with `LAVISH_AXI_STATE_DIR`. Project-local config: copy `.env.lavish.example` to `.env.lavish.local` (loaded by `src/load-env.js` on CLI start). See [STORE.md](./STORE.md) and [FORK.md](./FORK.md).
+
+All backends key sessions by a sha256 prefix of the canonicalized file path - the canonical HTML path _is_ the identity (`src/session-store.js:sessionKey`).
 
 ### Request flow
 
@@ -91,5 +99,5 @@ No need to explicitly document the telemetry behaviors.
 - Native form controls (`button`, `input`, `select`, `textarea`, `option`, `label`, and editable regions) and their descendants are ignored by annotation handlers, so they can toggle, focus, type, and call `window.lavish.queuePrompt()` or `window.lavish.sendQueuedPrompts()` without `data-lavish-action`.
 - Use `data-lavish-action` only for custom non-native controls that should bypass annotation and get a pointer cursor.
 - For text annotations, `prompt.selector` is the common ancestor/container selector, not the complete identity. Use the `target` range boundaries and snapshot context to locate the exact selected text.
-- `SessionStore` re-reads and re-writes the entire `state.json` on every operation. There's no in-memory cache and no locking - acceptable because writes are infrequent and serialized through the single server process.
+- `FileSessionStore` re-reads and re-writes the entire `state.json` on every operation. SQLite and Mongo backends use row/document upserts. There's no cross-process locking - acceptable because writes are infrequent and serialized through the single server process.
 - Tests use `LAVISH_AXI_STATE_DIR` and ephemeral ports to stay isolated. When adding tests that spin up the server, do the same.

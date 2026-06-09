@@ -73,6 +73,20 @@ pnpm run build
 pnpm link
 ```
 
+### reachkrishnaraj fork (Mongo + SQLite + review UX)
+
+This fork adds pluggable session storage (file / SQLite / MongoDB), project-local `.env.lavish.local`, and review submit reliability fixes. See [FORK.md](./FORK.md) and [STORE.md](./STORE.md).
+
+```sh
+git clone https://github.com/reachkrishnaraj/lavish-axi.git
+cd lavish-axi
+pnpm install
+pnpm run build
+npm install -g .
+cp .env.lavish.example .env.lavish.local   # set LAVISH_AXI_STORE=...
+lavish-axi stop && lavish-axi --version
+```
+
 ## Teach Your Agent About Lavish (recommended)
 
 Lavish does not wire itself into your agent automatically, so in a fresh session your agent would not know to use it.

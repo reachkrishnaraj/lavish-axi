@@ -1,6 +1,6 @@
 {
   "name": "lavish-axi",
-  "version": "0.1.20",
+  "version": "0.2.0",
   "packageManager": "pnpm@11.1.1",
   "description": "HTML is the new markdown. Lavish is the new editor for your HTML artifacts.",
   "type": "module",
@@ -32,6 +32,7 @@
     "chokidar": "^4.0.3",
     "daisyui": "^5.5.19",
     "express": "^5.2.1",
+    "mongodb": "^6.21.0",
     "open": "^10.2.0"
   },
   "devDependencies": {
@@ -58,12 +59,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/kunchenguid/lavish-axi.git"
+    "url": "git+https://github.com/reachkrishnaraj/lavish-axi.git"
   },
   "bugs": {
-    "url": "https://github.com/kunchenguid/lavish-axi/issues"
+    "url": "https://github.com/reachkrishnaraj/lavish-axi/issues"
   },
-  "homepage": "https://github.com/kunchenguid/lavish-axi#readme",
+  "homepage": "https://github.com/reachkrishnaraj/lavish-axi#readme",
   "publishConfig": {
     "access": "public"
   }

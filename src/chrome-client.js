@@ -4,7 +4,9 @@ const sessionDataElement = document.getElementById("lavish-session");
 const sessionData = JSON.parse(sessionDataElement?.textContent || "{}");
 const key = String(sessionData.key || "");
 const queueStorageKey = "lavish-axi:queued:" + key;
+const draftStorageKey = "lavish-axi:draft:" + key;
 const initialChat = Array.isArray(sessionData.initialChat) ? sessionData.initialChat : [];
+const SNAPSHOT_TIMEOUT_MS = 3000;
 
 const frame = /** @type {HTMLIFrameElement} */ (document.getElementById("artifact"));
 const annotationPills = /** @type {HTMLDivElement} */ (document.getElementById("annotationPills"));
@@ -16,6 +18,7 @@ const endButton = /** @type {HTMLButtonElement} */ (document.getElementById("end
 const filePathInput = /** @type {HTMLInputElement} */ (document.getElementById("filePath"));
 const copyPathButton = /** @type {HTMLButtonElement} */ (document.getElementById("copyPath"));
 const presenceBanner = /** @type {HTMLDivElement} */ (document.getElementById("presenceBanner"));
+const submitStatus = /** @type {HTMLDivElement} */ (document.getElementById("submitStatus"));
 
 const queued = loadQueuedPrompts();
 let annotation = true;
@@ -24,6 +27,8 @@ let pendingSnapshot = "";
 let workingBubble = null;
 let submitQueuedPromise = null;
 let submitQueuedAgain = false;
+let snapshotWaitTimer = null;
+let submitStatusTimer = null;
 let lastScroll = { x: 0, y: 0 };
 
 function escapeHtml(value) {
@@ -49,6 +54,14 @@ function loadQueuedPrompts() {
   }
 }
 
+function loadComposerDraft() {
+  try {
+    return sessionStorage.getItem(draftStorageKey) || "";
+  } catch {
+    return "";
+  }
+}
+
 function persistQueuedPrompts() {
   try {
     if (queued.length) {
@@ -58,6 +71,45 @@ function persistQueuedPrompts() {
     }
   } catch {
     // The in-memory queue still works if browser storage is unavailable.
+  }
+}
+
+function persistComposerDraft() {
+  try {
+    const value = chatInput.value;
+    if (value) {
+      sessionStorage.setItem(draftStorageKey, value);
+    } else {
+      sessionStorage.removeItem(draftStorageKey);
+    }
+  } catch {
+    // Draft persistence is best-effort.
+  }
+}
+
+function clearComposerDraft() {
+  try {
+    sessionStorage.removeItem(draftStorageKey);
+  } catch {
+    // Ignore storage failures.
+  }
+}
+
+function showSubmitStatus(message, tone = "info") {
+  if (!submitStatus) return;
+  if (submitStatusTimer) {
+    clearTimeout(submitStatusTimer);
+    submitStatusTimer = null;
+  }
+  submitStatus.hidden = false;
+  submitStatus.className = "submit-status is-" + tone;
+  submitStatus.textContent = message;
+  if (tone !== "error") {
+    submitStatusTimer = setTimeout(() => {
+      submitStatus.hidden = true;
+      submitStatus.textContent = "";
+      submitStatusTimer = null;
+    }, 4000);
   }
 }
 
@@ -109,7 +161,7 @@ function syncChat(chat) {
 
 function setAgentPresence(state) {
   agentPresence = state === "listening" || state === "working" ? state : "waiting";
-  sendButton.disabled = agentPresence === "working";
+  sendButton.disabled = agentPresence === "working" || Boolean(submitQueuedPromise);
   if (presenceBanner) presenceBanner.hidden = agentPresence !== "waiting";
 
   if (agentPresence !== "working") {
@@ -138,8 +190,25 @@ function postToFrame(message) {
   if (frame.contentWindow) frame.contentWindow.postMessage(message, "*");
 }
 
+function clearSnapshotWait() {
+  if (snapshotWaitTimer) {
+    clearTimeout(snapshotWaitTimer);
+    snapshotWaitTimer = null;
+  }
+}
+
+function requestSnapshotAndSubmit() {
+  postToFrame({ type: "lavish:requestSnapshot" });
+  clearSnapshotWait();
+  snapshotWaitTimer = setTimeout(() => {
+    snapshotWaitTimer = null;
+    pendingSnapshot = pendingSnapshot || "";
+    void deliverQueuedPrompts({ snapshotTimedOut: true });
+  }, SNAPSHOT_TIMEOUT_MS);
+}
+
 function sendQueued() {
-  if (agentPresence === "working") return;
+  if (agentPresence === "working" || submitQueuedPromise) return;
 
   const text = chatInput.value.trim();
   if (text) {
@@ -147,11 +216,26 @@ function sendQueued() {
     persistQueuedPrompts();
     addChat("user", text);
     chatInput.value = "";
+    clearComposerDraft();
     render();
   }
   if (!queued.length) return;
 
-  postToFrame({ type: "lavish:requestSnapshot" });
+  requestSnapshotAndSubmit();
+}
+
+async function deliverQueuedPrompts({ snapshotTimedOut = false } = {}) {
+  try {
+    await submitQueued();
+    if (snapshotTimedOut) {
+      showSubmitStatus("Feedback sent without a page snapshot. Annotations may be less precise.", "info");
+    } else {
+      showSubmitStatus("Feedback sent to agent.", "success");
+    }
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "Could not send feedback.";
+    showSubmitStatus(detail + " Your queue is saved — try again.", "error");
+  }
 }
 
 async function submitQueued() {
@@ -161,6 +245,7 @@ async function submitQueued() {
   }
 
   let succeeded = false;
+  sendButton.disabled = true;
   submitQueuedPromise = submitQueuedOnce();
   try {
     const result = await submitQueuedPromise;
@@ -168,9 +253,10 @@ async function submitQueued() {
     return result;
   } finally {
     submitQueuedPromise = null;
+    sendButton.disabled = agentPresence === "working";
     const shouldSubmitAgain = submitQueuedAgain;
     submitQueuedAgain = false;
-    if (succeeded && shouldSubmitAgain && queued.length) submitQueued();
+    if (succeeded && shouldSubmitAgain && queued.length) sendQueued();
   }
 }
 
@@ -181,7 +267,16 @@ async function submitQueuedOnce() {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ prompts, domSnapshot: pendingSnapshot }),
   });
-  if (!response.ok) throw new Error("failed to submit queued prompts");
+  if (!response.ok) {
+    let detail = "Failed to submit queued prompts.";
+    try {
+      const body = await response.json();
+      if (body && body.error) detail = String(body.error);
+    } catch {
+      // Keep the default message when the error body is not JSON.
+    }
+    throw new Error(detail);
+  }
   for (const prompt of prompts) {
     const index = queued.indexOf(prompt);
     if (index !== -1) queued.splice(index, 1);
@@ -242,8 +337,9 @@ window.addEventListener("message", (event) => {
     render();
   }
   if (msg.type === "lavish:snapshot") {
+    clearSnapshotWait();
     pendingSnapshot = msg.snapshot || "";
-    submitQueued();
+    void deliverQueuedPrompts();
   }
   if (msg.type === "lavish:scroll") {
     lastScroll = { x: Number(msg.x) || 0, y: Number(msg.y) || 0 };
@@ -260,6 +356,7 @@ annotationButton.onclick = () => {
 };
 
 sendButton.onclick = sendQueued;
+chatInput.addEventListener("input", persistComposerDraft);
 chatInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
     event.preventDefault();
@@ -285,6 +382,7 @@ events.addEventListener("agent-reply", (event) => addChat("agent", JSON.parse(ev
 events.addEventListener("chat-sync", (event) => syncChat(JSON.parse(event.data).chat || []));
 events.addEventListener("agent-presence", (event) => setAgentPresence(JSON.parse(event.data).state));
 
+chatInput.value = loadComposerDraft();
 render();
 initialChat.forEach((item) => addChat(item.role, item.text));
 setAgentPresence("waiting");

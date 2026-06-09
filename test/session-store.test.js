@@ -4,7 +4,12 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { SessionStore } from "../src/session-store.js";
+import { FileSessionStore, SessionStore } from "../src/session-store.js";
+import { runSessionStoreContract } from "./session-store-contract.js";
+
+test("FileSessionStore satisfies the shared session contract", async () => {
+  await runSessionStoreContract("file", async (dir) => new FileSessionStore(path.join(dir, "state.json")));
+});
 
 test("queued prompts are returned with DOM snapshot context and then cleared", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "lavish-store-"));

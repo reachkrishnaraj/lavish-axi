@@ -11,7 +11,8 @@ import { createDesignOutput, DESIGN_SYSTEM_HINT } from "./design-reference.js";
 import { defaultPort, ensureStateDir, LOOPBACK_HOST, serverLogFile, stateFile } from "./paths.js";
 import { findPlaybook, listPlaybooks, playbookIds } from "./playbooks.js";
 import { serve } from "./server.js";
-import { canonicalFile, sessionKey, SessionStore } from "./session-store.js";
+import { createSessionStore } from "./create-session-store.js";
+import { canonicalFile, sessionKey } from "./session-store.js";
 import { initDefaultTelemetry } from "./telemetry.js";
 
 const COMMANDS = new Set(["open", "poll", "end", "stop", "server", "playbook", "design", "setup"]);
@@ -311,14 +312,20 @@ export function resolveHookHomeDir(env = process.env, fallback = os.homedir()) {
 async function serverCommand(args) {
   const port = Number(flagValue(args, "--port") || defaultPort());
   const debug = args.includes("--verbose") || process.env.LAVISH_AXI_DEBUG === "1";
-  const server = await serve({ port, stateFile: stateFile(), version: VERSION, debug });
+  const server = await serve({ port, version: VERSION, debug });
   await server.done;
   return "";
 }
 
 async function visibleSessions() {
-  const store = new SessionStore(stateFile());
-  return (await store.listSessions()).filter((session) => session.status !== "ended");
+  const store = await createSessionStore({ stateFile: stateFile() });
+  try {
+    return (await store.listSessions()).filter((session) => session.status !== "ended");
+  } finally {
+    if (typeof store.close === "function") {
+      await store.close();
+    }
+  }
 }
 
 async function assertHtmlFile(file) {

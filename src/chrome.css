@@ -372,6 +372,24 @@ body.lavish {
 .presence-banner[hidden] {
   display: none;
 }
+.submit-status {
+  font-size: 11px;
+  font-weight: var(--w-medium);
+  line-height: 1.4;
+  min-height: 0;
+}
+.submit-status[hidden] {
+  display: none;
+}
+.submit-status.is-success {
+  color: var(--sage-300);
+}
+.submit-status.is-error {
+  color: var(--danger);
+}
+.submit-status.is-info {
+  color: var(--fg-dim);
+}
 .annotation-pills {
   display: flex;
   flex-wrap: wrap;

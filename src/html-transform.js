@@ -1,3 +1,7 @@
+export function isServableHtml(filePath) {
+  return /\.html?$/i.test(String(filePath || ""));
+}
+
 export function injectLavishSdk(html, key) {
   const script = `<script src="/sdk.js?key=${encodeURIComponent(key)}"></script>`;
   if (/<\/body\s*>/i.test(html)) {
